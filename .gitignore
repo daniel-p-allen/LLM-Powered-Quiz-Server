@@ -1,0 +1,58 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+myenv/
+.env/
+.env*/
+*.venv/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs and runtime files
+*.log
+*.pid
+*.out
+*.bak
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Temporary data / cache
+.cache/
+*.tmp
+*.swp
+
+# Model and data files
+*.h5
+*.pkl
+*.pt
+*.onnx
+*.model
+*.ckpt
+
+# Sensitive or environment configuration
+.env
+*.pem
+*.key
+*.json
+*.cfg
+
+# OS Python virtual env references
+include/
+lib/
+share/
+bin/
+pyvenv.cfg
+
