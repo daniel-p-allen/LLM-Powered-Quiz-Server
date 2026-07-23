@@ -1,158 +1,122 @@
 # LLM-Powered-Quiz-Server
 
-The **LLM-Powered-Quiz-Server** repository provides the server-side logic for a next-generation, LLM-driven quiz application.  
-It handles question generation, user scoring, and model inference requests, exposing a secure API consumed by the companion frontend app.
+A Flask server that asks a language model for a multiple-choice question on a topic,
+parses the reply into structured JSON, and returns it to an Android client.
 
----
+The companion frontend is
+[LLM-Powered-Quiz-App](https://github.com/daniel-p-allen/LLM-Powered-Quiz-App).
 
-## Overview
-
-This backend integrates a large language model (LLM) to dynamically generate, evaluate, and explain quiz questions in real time.  
-The system is designed for modularity and educational research use, allowing model prompts, evaluation logic, and scoring methods to be extended without refactoring core components.
-
----
-
-## Key Features
-
-- **Dynamic Question Generation** – Uses an LLM to produce topic-relevant, difficulty-balanced quiz questions.  
-- **Automated Answer Evaluation** – Model-based semantic comparison between student answers and reference solutions.  
-- **Explanatory Feedback** – Returns short concept explanations generated from the model for each question.  
-- **RESTful API Architecture** – Clean GET endpoints for quiz generation and health checking.  
-- **Stateless Inference Pipeline** – Handles isolated user sessions for scalability and cloud deployment.  
-- **Configurable Model Gateway** – Pluggable connector supporting OpenAI, Hugging Face, or locally hosted models.
-
----
-
-## Repository Context
-
-This is the **server component** of the full LLM Quiz System.  
-The corresponding **frontend** (Android client) can be found in the companion repository.
-
-- **Frontend repo:** `LLM-Powered-Quiz-App`
-- **Backend repo:** `LLM-Powered-Quiz-Server` *(this repository)*
-
----
-
-## Architecture
+## How it works
 
 ```
-Frontend (UI) ─► REST API ─► LLM-Powered-Quiz-Server
-                                ├─ ModelHandler (LLM gateway)
-                                ├─ QuestionGenerator
-                                ├─ Evaluator
-                                ├─ ScoringService
-                                └─ MongoDB / LocalStorage (optional)
+  Android client
+        │  GET /getQuiz?topic=photosynthesis
+        ▼
+  ┌──────────────────────────────────────────┐
+  │  main.py  (Flask, port 5000)             │
+  │                                          │
+  │   fetchQuizFromLlama()                   │
+  │     builds a prompt demanding a          │
+  │     fixed output format, then POSTs ─────┼──► Hugging Face Router
+  │                                          │    google/gemma-3-27b-it
+  │   process_quiz()                    ◄────┼──── free-form text reply
+  │     regex-parses that reply into         │
+  │     question / options / answer          │
+  └──────────────────┬───────────────────────┘
+                     │  JSON
+                     ▼
+   { "quiz": [ { "question": ...,
+                 "options": [A, B, C, D],
+                 "correct_answer": "B" } ] }
 ```
 
----
+The interesting problem is the middle step. A language model returns prose, but an
+Android client needs structured data. The prompt therefore specifies an exact output
+shape, and `process_quiz()` parses it with a regular expression — if the model
+deviates, parsing returns nothing and the endpoint answers `500` with the raw text
+attached, rather than handing the client something malformed.
 
-## Tech Stack
+## Four ways to run the model
 
-| Layer | Technology |
-|-------|-------------|
-| Language | Python 3.12 |
-| Framework | Flask / FastAPI *(depending on deployment branch)* |
-| AI Model | Hugging Face Router API (OpenAI-compatible) |
-| Data Handling | JSON over HTTPS |
-| Environment | Virtual env (`venv` / `myenv`), dotenv configuration |
-| Version Control | Git / GitHub |
-| OS Compatibility | macOS & Linux verified |
+The repository keeps four variants of the same server, each integrating the model a
+different way. They exist because "how do you actually call an LLM from a backend" has
+several answers with very different trade-offs.
 
----
+| File | Approach | Trade-off |
+|---|---|---|
+| `main.py` | HTTP POST to the Hugging Face Router, an OpenAI-compatible endpoint | Runs on any machine; needs a token and a network. **This is the one that runs.** |
+| `main-inferenceclient.py` | `huggingface_hub.InferenceClient` | Same hosted inference, through an SDK rather than raw HTTP |
+| `main-pipeline.py` | `transformers.pipeline()`, model running locally | No token or network, but downloads the model and wants a GPU |
+| `main-directModel.py` | `AutoTokenizer` + `AutoModelForCausalLM` directly | Most control over generation, most code, same hardware cost |
 
-## Setup & Run
+`hugginginfo.md` records the Hugging Face setup — access tokens, the licence
+acknowledgement the Gemma model requires, and the router configuration — with
+screenshots.
+
+## Endpoints
+
+| Method | Path | Query | Returns |
+|---|---|---|---|
+| `GET` | `/getQuiz` | `topic` | A parsed question, options and answer as JSON |
+| `GET` | `/test` | – | `{"quiz": "test"}`, for checking the server is reachable |
+
+`/getQuiz` answers `400` if `topic` is missing, and `500` if the model's reply cannot be
+parsed.
+
+## Running it
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/daniel-p-allen/LLM-Powered-Quiz-Server.git
-cd LLM-Powered-Quiz-Server
-
-# 2. Create environment
 python3 -m venv venv
-source venv/bin/activate     # Windows: venv\Scripts\activate
-
-# 3. Install dependencies
+source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-pip install flask python-dotenv requests
 
-# 4. Run the server
-python main.py
+echo "HF_API_TOKEN=your_token_here" > .env
+
+python main.py                    # http://127.0.0.1:5000
 ```
 
-Default server runs at `http://127.0.0.1:5000/`.
+A Hugging Face access token is required, and the Gemma model's licence must be
+acknowledged on your Hugging Face account first — `hugginginfo.md` shows where.
 
----
+The other three variants need heavier dependencies (`transformers`, `torch`,
+`huggingface_hub`), deliberately kept out of `requirements.txt` because they pull in
+several gigabytes and are not needed to run the server.
 
-## Environment Variables
-
-Create a `.env` file in the root directory:
-
-```
-HF_API_TOKEN=<your_huggingface_api_token>
-MODEL_PROVIDER=huggingface
-MODEL_NAME=google/gemma-3-27b-it
-```
-
-*Never commit your `.env` file.*
-
----
-
-## API Endpoints
-
-| Method | Endpoint | Params | Description |
-|--------|-----------|---------|-------------|
-| `GET`  | `/getQuiz` | `topic` (query) | Calls the LLM to generate a quiz question for the given topic and returns JSON. |
-| `GET`  | `/test` | – | Health/check endpoint returning a dummy payload. |
-
-
----
-
-## Deployment
-
-The backend supports containerised deployment:
-
-```bash
-docker build -t LLM-Powered-Quiz-Server .
-docker run -p 5000:5000 LLM-Powered-Quiz-Server
-```
-
-or deploy directly to platforms such as **Render**, **Railway**, or **AWS Elastic Beanstalk**.
-
----
-
-## Project Structure
+## Layout
 
 ```
-LLM-Powered-Quiz-Server/
- ├── main.py
- ├── main-pipeline.py
- ├── main-inferenceclient.py
- ├── main-directModel.py
- ├── requirements.txt
- ├── README.md
- ├── venv/  (ignored)
- └── .gitignore
+main.py                    the server that runs
+main-inferenceclient.py    the same, via the huggingface_hub SDK
+main-pipeline.py           the same, with the model running locally
+main-directModel.py        the same, driving the model directly
+hugginginfo.md             Hugging Face setup notes and screenshots
+requirements.txt           what main.py needs
 ```
 
----
+## Known limitations
 
-## Security Notes
+- **One question per request.** The prompt asks for a single question; the format
+  supports more, but nothing requests them yet.
+- **Parsing is brittle by design.** The model is asked for an exact format and the reply
+  is matched against it. A model that ignores the format produces a `500` rather than a
+  guess — safer for the client, but output quality depends on the prompt holding.
+- **No tests.** Unlike my other repositories, this one has no automated suite. The
+  parser and the endpoint behaviour are both straightforward to test, and that is the
+  obvious next step.
+- **No authentication.** The endpoints are open. Fine on localhost, not for deployment.
+- **Not deployed.** It runs locally, against the Android emulator at `10.0.2.2:5000`.
 
-- No secrets are tracked; `.env`, virtual environments, and key files are excluded in `.gitignore`.  
-- HTTPS and token-based authentication are recommended for production deployments.  
-- Rotate API keys regularly and avoid embedding credentials in code.
+## Security
 
----
+`.env` holds the Hugging Face token and is excluded by `.gitignore`. No secrets are
+tracked.
 
 ## License
 
-This project is released under the **MIT License** – see the `LICENSE` file for details.
+MIT — see [`LICENSE`](LICENSE).
 
----
+## Development notes
 
-## Acknowledgments
-
-Developed by **Daniel Allen (DanDeakinTutors)** as part of a university and personal applied-AI project.  
-Uses open-source LLM frameworks and the Python scientific ecosystem.
-
----
+Built by me as part of a university applied-AI project. The July 2026 documentation pass
+was carried out with the assistance of an AI coding assistant (Claude); the code, the
+design decisions, and the review of the result are my own.
